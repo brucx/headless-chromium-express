@@ -2,18 +2,39 @@
 
 无头浏览器海报渲染服务
 
+环境变量：
+
 ```
+REDIS_URI=redis://:authpassword@127.0.0.1:6380/4
+```
+
+接口：
+
+```
+#### 新建 handlebars 的 html 模板
 curl --request POST \
-  --url http://headless-chromium-express:3000/ \
+  --url http://localhost:3000/template \
   --header 'content-type: application/json' \
   --data '{
-    "title": "ytyy",
-    "cover": "https://img3.doubanio.com/view/subject/m/public/s29405075.jpg",
-    "author": "fff",
-    "nickname": "tyuytfiu",
-    "avatar": "https://wx.qlogo.cn/mmopen/vi_32/PiajxSqBRaELP8IJavXzOpicoBUwxtjfq7Pcgj1ZRQPDPhjJROPSYYwsmtbpicpwsH8SmF6oGz5IzoyClDX2tBRWw/132",
-    "digestContent": "fgfdsgsdfghfdsghdfs",
-    "qrcode": "",
-    "note": "sdfgrhththgdhgfhgfj "
+    "html": "<h1>hello world!{{text}}</h1>"
+  }'
+
+#### 获取模板列表
+curl --request GET \
+  --url http://127.0.0.1:3000/templates
+  
+#### 获取单个模板
+curl --request GET \
+  --url http://127.0.0.1:3000/template/0
+  
+#### 生成海报
+curl --request POST \
+  --url http://localhost:3000/generator \
+  --header 'content-type: application/json' \
+  --data '{
+    "templateId": 4,
+    "params": {
+      "text": "ytyytr"
+    }
   }'
 ```
