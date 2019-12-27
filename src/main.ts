@@ -6,32 +6,63 @@ import Pino = require('express-pino-logger');
 import Redis = require('ioredis');
 
 const REDIS_KEY = 'headless:templates';
+const POOL_AVAILABLE = 5;
 
 const redis = new Redis(process.env.REDIS_URI);
 const pino = Pino();
 
-let myBrowser;
-puppeteer.launch({
-  executablePath: process.env.CHROME_BIN || null,
-  headless: true,
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '–disable-gpu',
-    '–disable-dev-shm-usage',
-    '–no-first-run',
-    '–no-zygote',
-    '–single-process',
-  ],
-  defaultViewport: {
-    isMobile: true,
-    width: 375,
-    height: 200,
-    deviceScaleFactor: 2,
-  },
-}).then(browser => {
-  myBrowser = browser;
-});
+class PagePool {
+  private browser: puppeteer.Browser;
+  private pages: puppeteer.Page[];
+
+  constructor(browser: puppeteer.Browser) {
+    this.browser = browser;
+  }
+
+  async init() {
+    const pagesPromise = new Array(POOL_AVAILABLE).fill(this.browser.newPage());
+    this.pages = (await Promise.all(pagesPromise)) as puppeteer.Page[];
+  }
+
+  async getPage() {
+    return this.pages.pop() || this.browser.newPage();
+  }
+
+  releasePage(page: puppeteer.Page) {
+    if (this.pages.length > POOL_AVAILABLE) {
+      page.close();
+      return;
+    }
+    this.pages.push(page);
+  }
+}
+
+let pool: PagePool;
+
+puppeteer
+  .launch({
+    executablePath: process.env.CHROME_BIN || null,
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '–disable-gpu',
+      '–disable-dev-shm-usage',
+      '–no-first-run',
+      '–no-zygote',
+      '–single-process',
+    ],
+    defaultViewport: {
+      isMobile: true,
+      width: 375,
+      height: 200,
+      deviceScaleFactor: 2,
+    },
+  })
+  .then(browser => {
+    pool = new PagePool(browser);
+    pool.init();
+  });
 
 /**
  * WEB 服务
@@ -50,7 +81,7 @@ app.post('/', async (req, resp) => {
 app.post('/template', async (req, resp) => {
   const { body } = req;
   pino.logger.info({ body });
-  const templateId = (await redis.rpush(REDIS_KEY, body.html) - 1);
+  const templateId = (await redis.rpush(REDIS_KEY, body.html)) - 1;
   resp.json({
     templateId,
     html: body.html,
@@ -76,10 +107,15 @@ app.post('/generator', async (req, resp) => {
     const template = await redis.lindex(REDIS_KEY, templateId);
     const templateBuilder = handlebars.compile(template);
     const content = templateBuilder(params);
-    const [page] = await myBrowser.pages();
+    const page = await pool.getPage();
     await page.setContent(content);
-    const base64 = await page.screenshot({ type: 'jpeg', encoding: 'base64', fullPage: true });
+    const base64 = await page.screenshot({
+      type: 'jpeg',
+      encoding: 'base64',
+      fullPage: true,
+    });
     resp.send({ base64 });
+    pool.releasePage(page);
   } catch (error) {
     pino.logger.error(error);
     resp.send({ error });
